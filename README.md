@@ -236,7 +236,7 @@ recomputed under the updated configuration.
 
 ## Reproducing the paper's experiments
 
-Before comparing against published numbers, read [Teleportation settings and published-result reproducibility](#teleportation-settings-and-published-result-reproducibility). The commands below describe the current code paths; they do not automatically restore the paper-era teleportation configuration.
+Before comparing against published numbers, read [Teleportation configuration and version compatibility](#teleportation-settings-and-published-result-reproducibility). The commands below describe the current code paths; they do not automatically restore the paper-era teleportation configuration.
 
 The paper reports three experiments (learning performance, testing/generalization, and
 transferability/online adaptation) plus a Table 1 runtime/scalability benchmark. This
