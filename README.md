@@ -7,6 +7,7 @@
 ![CI](https://github.com/andngdtudk/T-REX/actions/workflows/ci.yml/badge.svg)
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Python](https://img.shields.io/badge/python-3.10%2B-blue.svg)
+[![DOI](https://img.shields.io/badge/DOI-10.1186%2Fs12544--026--00841--1-blue.svg)](https://doi.org/10.1186/s12544-026-00841-1)
 [![arXiv](https://img.shields.io/badge/arXiv-2506.13836-b31b1b.svg)](https://arxiv.org/abs/2506.13836)
 
 **T-REX** (Traffic control Environment for Robustness Evaluation under incidents) is a
@@ -19,8 +20,9 @@ with configurable location/duration/severity, simulates realistic driver respons
 interface so any RL-TSC method can be trained and evaluated on how much its performance
 degrades when the network is disrupted.
 
-> Companion code for *"Robustness of Reinforcement Learning-Based Traffic Signal Control
-> under Incidents: A Comparative Study"* (see [Citation](#citation)).
+> Companion code for Nguyen et al. (2026), *"A framework for benchmarking traffic
+> signal control robustness under incidents: comparative study of reinforcement learning-based methods"*,
+> published in *European Transport Research Review* (see [Citation](#citation)).
 
 ## Key features
 
@@ -36,6 +38,7 @@ degrades when the network is disrupted.
 - **Gym-compatible RL interface**, adapted from [RESCO](https://github.com/Pi-Star-Lab/RESCO),
   supporting **IDQN, IPPO, MPLight, FMA2C**, and rule-based baselines (Fixed-time, Random,
   Max-pressure, Greedy).
+- **Selective incident teleportation protection** — the updated implementation protects incident blockers and incident-affected queues from automatic teleportation without globally disabling SUMO gridlock resolution. See [Teleportation settings and published-result reproducibility](#teleportation-settings-and-published-result-reproducibility).
 - **Modular by design** — the incident model (`Initializer`/`Deployment`) is decoupled from
   the RL interface, so it's meant to be portable to other traffic simulators or RL-TSC
   stacks, not only this repo's SUMO+RESCO integration.
@@ -184,7 +187,81 @@ aggregation) across a training run's episodes; see `readXML.py`/`graph.py` for e
 ad hoc post-processing of `tripinfo_*.xml` (not part of the core pipeline — see Repository
 structure below).
 
+## Teleportation settings and published-result reproducibility
+
+> **Important distinction:** The published T-REX experiments and the current repository
+> use different teleportation configurations. As a result, results obtained with the
+> current implementation may differ from those reported in Nguyen et al. (2026),
+> even when the network, controller, demand, incident configuration, and random seed
+> are otherwise unchanged.
+
+### Original configuration used for the published paper
+
+The numerical results in the 2026 *European Transport Research Review* paper were
+obtained with SUMO's global setting:
+
+```bash
+--time-to-teleport -1
+```
+
+This disables time-based teleportation of stuck vehicles across the network. The
+setting was intentionally selected for incident simulation: allowing automatic
+teleportation could prematurely remove an incident-blocking vehicle or clear vehicles
+queued behind a blockage, weakening the modeled impact of incidents.
+
+There is, however, an important side effect. Disabling teleportation globally also
+prevents SUMO from using this mechanism to resolve **unrelated network congestion
+and gridlock**. This can produce persistent spillback and gridlock, especially in
+larger, congested networks. In the Ingolstadt-21 scenario, the MaxPressure baseline
+was particularly affected by this behavior, contributing to the high travel times
+reported in the paper. These are results under the original **global no-teleportation
+assumption**, not necessarily representative of the same controller under SUMO's
+normal teleportation policy. This should not be interpreted as a demonstrated
+error in the MaxPressure algorithm.
+
+### Updated implementation: selective teleportation exemptions
+
+The current implementation no longer requires globally disabling teleportation to
+keep incidents in place. Instead, it applies a **vehicle-type-level exemption**:
+
+- **`IC`** — the stationary vehicle representing an incident is assigned a vehicle
+  type with `timeToTeleport="-1"`, so the incident blocker is not automatically
+  teleported because it remains stopped.
+- **`CAV4`** — vehicles identified by the incident-handling logic as queued behind
+  an active blockage can be switched to a vehicle type with
+  `timeToTeleport="-1"`. This preserves the incident-affected queue without
+  exempting all network traffic.
+- **Other vehicles** — follow the active SUMO global teleportation configuration,
+  allowing time-based resolution of unrelated gridlock when enabled.
+
+The relevant vehicle types are defined in the network `.add.xml` files, and the
+incident-handling logic is located in `T_REX.py` (`Deployment`). See
+[SUMO's vehicle-type attribute documentation](https://sumo.dlr.de/docs/Definition_of_Vehicles%2C_Vehicle_Types%2C_and_Routes.html#available-vtype-attributes)
+for `timeToTeleport`. The `CAV4` designation refers to the incident-handling
+vehicle type, not an assertion about autonomous-vehicle behavior.
+
+**This is a change in simulation behavior, not a change to the MaxPressure control
+rule itself.** It may affect performance comparisons across controllers and
+networks, especially when gridlock would otherwise persist.
+
+### Which configuration should you use?
+
+| Objective | Teleportation configuration | Interpretation |
+|---|---|---|
+| Reproduce the **published 2026 results** | Restore global `--time-to-teleport -1` and match the original code version, SUMO version, seeds, demand, and experiment settings | Matches the published experimental assumption; the current code alone is not guaranteed to reproduce the published numbers exactly |
+| Run experiments with the **current T-REX implementation** | Keep normal SUMO time-based teleportation enabled for general traffic, and selectively exempt `IC` / incident-affected `CAV4` vehicles | Preserves the targeted incident blocking while allowing unrelated gridlock resolution |
+| Assess sensitivity to teleportation | Run both configurations with identical other settings | Separates simulation-configuration effects from controller performance |
+
+The exact global teleportation value in an updated run should be checked in the
+SUMO startup arguments/configuration rather than inferred from the vehicle types.
+Restoring `--time-to-teleport -1` is **necessary but not by itself sufficient**
+for exact paper reproduction if other code or dependency behavior has changed.
+This repository does not claim that the original experiment outputs have been
+recomputed under the updated configuration.
+
 ## Reproducing the paper's experiments
+
+Before comparing against published numbers, read [Teleportation settings and published-result reproducibility](#teleportation-settings-and-published-result-reproducibility). The commands below describe the current code paths; they do not automatically restore the paper-era teleportation configuration.
 
 The paper reports three experiments (learning performance, testing/generalization, and
 transferability/online adaptation) plus a Table 1 runtime/scalability benchmark. This
@@ -265,12 +342,15 @@ vehicle, roadworks, speed-reduction/environmental, signal malfunction). Any of t
 single-lane blockage for a stalled vehicle), but there's no code-level switch to pick
 between them.
 
-**Teleport exemption**: SUMO's default behavior is to "teleport" (remove and respawn) a
-vehicle that's been stuck too long, which would otherwise silently un-block an incident or
-erase a genuinely-queued vehicle from the simulation. Every incident-capable network's
-`.add.xml` defines a `CAV4` vType (`timeToTeleport="-1"`) that queued vehicles are switched
-to for the duration they're blocked, and an `IC` vType (also `timeToTeleport="-1"`) for the
-incident's own blocking vehicle — this works identically across all 8 supported networks.
+**Teleport exemption (current implementation)**: SUMO can teleport vehicles that
+remain stuck beyond its configured threshold. To prevent this from prematurely clearing
+an incident, each incident-capable network's `.add.xml` defines an `IC` vehicle type
+with `timeToTeleport="-1"` for incident blockers and a `CAV4` vehicle type with the
+same exemption for vehicles identified as queued behind an active incident. Other
+traffic can retain SUMO's normal time-based teleportation behavior. This mechanism
+is available across all 8 supported networks. **The published experiments instead
+used global `--time-to-teleport -1`**, which disabled this gridlock-resolution
+mechanism network-wide; see [Teleportation settings and published-result reproducibility](#teleportation-settings-and-published-result-reproducibility).
 
 ## Repository structure
 
@@ -338,20 +418,24 @@ entry if you intend to use MPLight/FMA2C on it.
 ## Citation
 
 ```bibtex
-@misc{nguyen2025robustnessreinforcementlearningbasedtraffic,
-      title={Robustness of Reinforcement Learning-Based Traffic Signal Control under Incidents: A Comparative Study},
-      author={Dang Viet Anh Nguyen and Carlos Lima Azevedo and Tomer Toledo and Filipe Rodrigues},
-      year={2025},
-      eprint={2506.13836},
-      archivePrefix={arXiv},
-      primaryClass={cs.LG},
-      url={https://arxiv.org/abs/2506.13836},
+@article{nguyen2026trex,
+  title   = {A framework for benchmarking traffic signal control robustness under incidents: comparative study of reinforcement learning-based methods},
+  author  = {Nguyen, Dang Viet Anh and Azevedo, Carlos Lima and Toledo, Tomer and Rodrigues, Filipe},
+  journal = {European Transport Research Review},
+  year    = {2026},
+  volume  = {18},
+  pages   = {85},
+  doi     = {10.1186/s12544-026-00841-1},
+  url     = {https://doi.org/10.1186/s12544-026-00841-1}
 }
 ```
 
-This paper has been submitted to *European Transport Research Review*; journal
-volume/pages/DOI are not yet assigned (TBD — see `CITATION.cff`). The arXiv preprint above
-is the citable version in the meantime.
+Published article: https://doi.org/10.1186/s12544-026-00841-1  
+Related preprint: https://arxiv.org/abs/2506.13836
+
+**Reproducibility note:** The published experimental results used the global
+`--time-to-teleport -1` setting. See the [teleportation configuration note](#teleportation-settings-and-published-result-reproducibility)
+before interpreting results produced by the current repository.
 
 ## License
 
