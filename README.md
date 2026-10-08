@@ -187,62 +187,37 @@ aggregation) across a training run's episodes; see `readXML.py`/`graph.py` for e
 ad hoc post-processing of `tripinfo_*.xml` (not part of the core pipeline — see Repository
 structure below).
 
-## Teleportation settings and published-result reproducibility
+## Teleportation configuration and version compatibility
 
-> **Important distinction:** The published T-REX experiments and the current repository
-> use different teleportation configurations. As a result, results obtained with the
-> current implementation may differ from those reported in Nguyen et al. (2026),
-> even when the network, controller, demand, incident configuration, and random seed
-> are otherwise unchanged.
+### Configuration used in the published experiments
 
-### Original configuration used for the published paper
-
-The numerical results in the 2026 *European Transport Research Review* paper were
-obtained with SUMO's global setting:
+The experiments reported in Nguyen et al. (2026) used SUMO with the following configuration:
 
 ```bash
 --time-to-teleport -1
 ```
 
-This disables time-based teleportation of stuck vehicles across the network. The
-setting was intentionally selected for incident simulation: allowing automatic
-teleportation could prematurely remove an incident-blocking vehicle or clear vehicles
-queued behind a blockage, weakening the modeled impact of incidents.
+This setting disables automatic time-based teleportation of stuck vehicles throughout the network. It was intentionally adopted to preserve incident-induced congestion, including persistent lane blockages, queue formation, and spillback, without automatic removal of affected vehicles by SUMO.
 
-There is, however, an important side effect. Disabling teleportation globally also
-prevents SUMO from using this mechanism to resolve **unrelated network congestion
-and gridlock**. This can produce persistent spillback and gridlock, especially in
-larger, congested networks. In the Ingolstadt-21 scenario, the MaxPressure baseline
-was particularly affected by this behavior, contributing to the high travel times
-reported in the paper. These are results under the original **global no-teleportation
-assumption**, not necessarily representative of the same controller under SUMO's
-normal teleportation policy. This should not be interpreted as a demonstrated
-error in the MaxPressure algorithm.
+Under this configuration, congestion may persist for extended periods, particularly in large and heavily loaded networks such as Ingolstadt-21. The published traffic performance results, including those of MaxPressure, reflect these simulation conditions.
 
-### Updated implementation: selective teleportation exemptions
+### Updated teleportation handling
 
-The current implementation no longer requires globally disabling teleportation to
-keep incidents in place. Instead, it applies a **vehicle-type-level exemption**:
+The current T-REX implementation provides a more selective mechanism for managing teleportation during incidents. Instead of disabling teleportation globally, it assigns vehicle-specific exemptions where needed:
 
-- **`IC`** — the stationary vehicle representing an incident is assigned a vehicle
-  type with `timeToTeleport="-1"`, so the incident blocker is not automatically
-  teleported because it remains stopped.
-- **`CAV4`** — vehicles identified by the incident-handling logic as queued behind
-  an active blockage can be switched to a vehicle type with
-  `timeToTeleport="-1"`. This preserves the incident-affected queue without
-  exempting all network traffic.
-- **Other vehicles** — follow the active SUMO global teleportation configuration,
-  allowing time-based resolution of unrelated gridlock when enabled.
+- **`IC`**: Incident-blocking vehicles use `timeToTeleport="-1"` to preserve the simulated blockage.
+- **`CAV4`**: Vehicles identified as queued behind an active incident can be assigned `timeToTeleport="-1"` to maintain incident-related congestion.
+- **Other vehicles**: Follow SUMO's configured global teleportation policy, allowing standard gridlock handling elsewhere in the network.
 
-The relevant vehicle types are defined in the network `.add.xml` files, and the
-incident-handling logic is located in `T_REX.py` (`Deployment`). See
-[SUMO's vehicle-type attribute documentation](https://sumo.dlr.de/docs/Definition_of_Vehicles%2C_Vehicle_Types%2C_and_Routes.html#available-vtype-attributes)
-for `timeToTeleport`. The `CAV4` designation refers to the incident-handling
-vehicle type, not an assertion about autonomous-vehicle behavior.
+The vehicle types are defined in the network `.add.xml` files, and the corresponding incident-handling logic is implemented in `T_REX.py` (`Deployment`).
 
-**This is a change in simulation behavior, not a change to the MaxPressure control
-rule itself.** It may affect performance comparisons across controllers and
-networks, especially when gridlock would otherwise persist.
+### Reproducing published results
+
+The published numerical results correspond to the original global teleportation-disabled configuration. To reproduce these experiments, use `--time-to-teleport -1` together with the original experimental settings and compatible implementation.
+
+The selective teleportation mechanism is a subsequent implementation refinement. As it changes the simulation's handling of unrelated congestion, numerical results from the updated configuration may differ from those reported in the original publication.
+
+The traffic signal control algorithms themselves are unchanged by this update.
 
 ### Which configuration should you use?
 
